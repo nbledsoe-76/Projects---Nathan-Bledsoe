@@ -1,0 +1,351 @@
+DROP TABLE Doctor CASCADE CONSTRAINTS;
+DROP TABLE EquipmentTechnician CASCADE CONSTRAINTS;
+DROP TABLE CanRepairEquipment CASCADE CONSTRAINTS;
+
+DROP TABLE Room CASCADE CONSTRAINTS;
+DROP TABLE RoomServices CASCADE CONSTRAINTS;
+
+DROP TABLE EquipmentType CASCADE CONSTRAINTS;
+DROP TABLE Equipment CASCADE CONSTRAINTS;
+
+DROP TABLE Admission CASCADE CONSTRAINTS;
+DROP TABLE Patient CASCADE CONSTRAINTS;
+DROP TABLE Examination CASCADE CONSTRAINTS;
+DROP TABLE RoomStay CASCADE CONSTRAINTS;
+DROP TABLE Employee CASCADE CONSTRAINTS;
+
+
+
+CREATE Table Employee ( 
+	EmployeeID Number Primary Key,  
+	FirstName VARCHAR2(50) NOT NULL,  
+    LastName VARCHAR2(50) NOT NULL,
+	Username VARCHAR2(50) UNIQUE NOT NULL,  
+	Salary NUMBER NOT NULL, 
+	JobTitle VARCHAR2(100),  
+	OfficeNumber VARCHAR2(20), 
+	EmployeeRank NUMBER, 
+	SupervisorID Number,  
+	StreetAddress VARCHAR2(100), 
+	City VARCHAR2(50) 
+); 
+ 
+CREATE TABLE Doctor ( 
+	EmployeeID NUMBER PRIMARY KEY, 
+	Gender CHAR(1), 
+	Specialty VARCHAR2(100), 
+	GraduatedFrom VARCHAR2(100), 
+	FOREIGN KEY (EmployeeID) REFERENCES Employee(EmployeeID) 
+); 
+
+
+CREATE TABLE EquipmentTechnician ( 
+	EmployeeID NUMBER PRIMARY KEY, 	 
+	FOREIGN KEY (EmployeeID) REFERENCES Employee(EmployeeID) 
+); 
+
+
+CREATE TABLE EquipmentType ( 
+
+	ID NUMBER PRIMARY KEY, 
+
+	Description VARCHAR2(200), 
+	Model VARCHAR2(100), 
+	Instructions VARCHAR2(500), 
+	NumberOfUnits NUMBER 
+); 
+
+ 
+
+CREATE TABLE CanRepairEquipment ( 
+
+	EmployeeID NUMBER, 
+
+	EquipmentTypeID NUMBER, 
+
+	PRIMARY KEY (EmployeeID, EquipmentTypeID), 
+
+	FOREIGN KEY (EmployeeID) REFERENCES EquipmentTechnician(EmployeeID), 
+
+	FOREIGN KEY (EquipmentTypeID) References EquipmentType(ID) 
+
+); 
+
+CREATE TABLE Room ( 
+
+	RoomNumber NUMBER PRIMARY KEY, 
+	IsOccupied CHAR(1) NOT NULL 
+); 
+
+CREATE TABLE RoomServices ( 
+	RoomNumber NUMBER, 
+	ServiceType VARCHAR2(100), 
+	PRIMARY KEY (RoomNumber, ServiceType), 
+	FOREIGN KEY (RoomNumber) REFERENCES Room(RoomNumber) 
+); 
+
+CREATE TABLE Equipment ( 
+	SerialNumber VARCHAR2(50) PRIMARY KEY, 
+	TypeID NUMBER, 
+	PurchaseYear NUMBER, 
+	LastInspection DATE, 
+	roomNum NUMBER, 
+	FOREIGN KEY (TypeID) REFERENCES EquipmentType(ID), 
+	FOREIGN KEY (roomNum) REFERENCES Room(RoomNumber) 
+); 
+
+
+
+
+CREATE TABLE Patient ( 
+	SSN NUMBER PRIMARY KEY, 
+	FirstName VARCHAR2(50) NOT NULL,  
+	LastName VARCHAR2(50) NOT NULL, 
+	Address VARCHAR2(200), 
+	PhoneNumber VARCHAR2 (50) 
+); 
+
+
+CREATE TABLE Admission ( 
+	AdmissionID NUMBER PRIMARY KEY, 
+	AdmitDate DATE NOT NULL, 
+	DischargeDate DATE, 
+	TotalCost NUMBER,  
+	InsuranceCoverage NUMBER, 
+	PatientSSN NUMBER NOT NULL, 
+    FutureVisit DATE,
+	FOREIGN KEY (PatientSSN) REFERENCES Patient(SSN) 
+); 
+
+
+CREATE TABLE Examination ( 
+	DoctorID NUMBER,  
+	AdmissionID NUMBER, 
+	Comments VARCHAR2(500), 
+	PRIMARY KEY (DoctorID, AdmissionID), 
+	FOREIGN KEY (DoctorID) REFERENCES Doctor(EmployeeID), 
+	FOREIGN KEY (AdmissionID) REFERENCES Admission(AdmissionID) 
+); 
+
+
+CREATE TABLE RoomStay ( 
+    Admission NUMBER, 
+    RoomNumber NUMBER,  
+    StartDate DATE NOT NULL, 
+    EndDate DATE,  
+    PRIMARY KEY (Admission, RoomNumber, StartDate), 
+    FOREIGN KEY (Admission) REFERENCES Admission(AdmissionID), 
+    FOREIGN KEY (RoomNumber) REFERENCES Room(RoomNumber) 
+); 
+
+CREATE OR REPLACE VIEW CriticalCases AS
+SELECT
+    p.SSN AS Patient_SSN,
+    p.FirstName AS FirstName,
+    p.LastName AS LastName,
+    COUNT(DISTINCT a.AdmissionID) AS numberOfAdmissionsToICU
+FROM
+    Patient p
+    JOIN Admission a ON p.SSN = a.PatientSSN
+    JOIN RoomStay rs ON rs.Admission = a.AdmissionID
+    JOIN RoomServices rsrv ON rs.RoomNumber = rsrv.RoomNumber 
+WHERE
+    UPPER(TRIM(rsrv.ServiceType)) = 'ICU' 
+    p.SSN, p.FirstName, p.LastName
+HAVING
+    COUNT(DISTINCT a.AdmissionID) >= 2;
+
+
+
+
+CREATE OR REPLACE VIEW DoctorsLoad AS
+SELECT
+    d.EmployeeID AS DoctorID,
+    d.GraduatedFrom AS GraduatedFrom,
+    CASE WHEN COUNT(DISTINCT ex.AdmissionID) > 10 THEN 'Overloaded' ELSE 'Underloaded' END AS load
+FROM
+    Doctor d
+    LEFT JOIN Examination ex ON d.EmployeeID = ex.DoctorID
+GROUP BY
+    d.EmployeeID, d.GraduatedFrom;
+    
+    
+    
+SELECT * FROM CriticalCases WHERE numberOfAdmissionsToICU > 4 
+;
+
+
+SELECT 
+    dl.DoctorID, 
+    e.FirstName, 
+    e.LastName 
+FROM 
+    DoctorsLoad dl 
+    JOIN Employee e ON dl.DoctorID = e.EmployeeID 
+WHERE 
+    dl.load = 'Overloaded' 
+    AND UPPER(TRIM(dl.GraduatedFrom)) = 'WPI';
+
+
+SELECT DISTINCT 
+    ex.DoctorID, 
+    a.PatientSSN AS Patient_SSN, 
+    ex.Comments
+FROM 
+    Examination ex
+    JOIN Admission a ON ex.AdmissionID = a.AdmissionID
+    JOIN CriticalCases cc ON a.PatientSSN = cc.Patient_SSN
+    JOIN DoctorsLoad dl ON ex.DoctorID = dl.DoctorID
+WHERE 
+    dl.load = 'Underloaded'
+    AND ex.Comments IS NOT NULL;
+    
+    
+    
+    
+CREATE OR REPLACE TRIGGER trg_exam_req_comment_icu 
+BEFORE INSERT OR UPDATE ON Examination
+FOR EACH ROW
+DECLARE
+    v_count NUMBER;
+BEGIN
+    -- Check if the admission involved an ICU stay
+    SELECT COUNT(*) INTO v_count
+    FROM RoomStay rs
+    JOIN RoomServices rsrv ON rs.RoomNumber = rsrv.RoomNumber
+    WHERE rs.Admission = :NEW.AdmissionID
+      AND UPPER(TRIM(rsrv.ServiceType)) = 'ICU';
+
+    IF v_count > 0 THEN
+        IF :NEW.Comments IS NULL OR TRIM(:NEW.Comments) IS NULL THEN
+            RAISE_APPLICATION_ERROR(-20001, 'Comment required: the patient stayed in the ICU during his admission.');
+        END IF;
+    END IF;
+END;
+/
+
+
+
+
+CREATE OR REPLACE TRIGGER trg_admission_set_insurance 
+ 	BEFORE INSERT OR UPDATE ON Admission 
+ 	FOR EACH ROW 
+BEGIN 
+ 	IF :NEW.TotalCost IS NOT NULL THEN  
+ 		:NEW.InsuranceCoverage := ROUND(:new.TotalCost* 0.65, 2); 
+ELSE 
+ 	IF :NEW.InsuranceCoverage IS NOT NULL AND :NEW.InsuranceCoverage <= 1 THEN  
+ 	:NEW.InsuranceCoverage := 0.65; 
+ 	END IF; 
+END IF; 
+END; 
+
+
+
+CREATE OR REPLACE TRIGGER trg_employee_rank0_supervisor
+BEFORE INSERT OR UPDATE ON Employee  
+FOR EACH ROW
+WHEN (NEW.EmployeeRank = 0)
+DECLARE
+    v_super_rank Employee.EmployeeRank%TYPE;
+BEGIN
+    -- Check if supervisor exists
+    IF :NEW.SupervisorID IS NULL THEN
+        RAISE_APPLICATION_ERROR(-20002, 'Regular employees with rank 0 need to have a supervisor.');
+    END IF;
+
+    -- Select rank of the supervisor
+    SELECT EmployeeRank
+    INTO v_super_rank
+    FROM Employee
+    WHERE EmployeeID = :NEW.SupervisorID;
+
+    -- Check if supervisor is Rank 1
+    IF v_super_rank <> 1 THEN
+        RAISE_APPLICATION_ERROR(-20003, 'Regular employees with rank 0 need to have a supervisor of rank 1.');
+    END IF;
+END;
+/
+
+
+
+CREATE OR REPLACE TRIGGER trg_employee_rank1_2_rules
+BEFORE INSERT OR UPDATE ON Employee
+FOR EACH ROW
+DECLARE
+    v_super_rank Employee.EmployeeRank%TYPE;
+BEGIN
+    -- Logic for Rank 1: Division Managers
+    IF :NEW.EmployeeRank = 1 THEN
+        -- Rule: Must have a supervisor
+        IF :NEW.SupervisorID IS NULL THEN
+            RAISE_APPLICATION_ERROR(-20004, 'Division managers at rank 1 need a supervisor');
+        END IF;
+
+        -- Check the rank of the supervisor
+        SELECT EmployeeRank
+        INTO v_super_rank   
+        FROM Employee
+        WHERE EmployeeID = :NEW.SupervisorID;
+
+        -- Rule: Supervisor must be Rank 2
+        IF v_super_rank <> 2 THEN
+            RAISE_APPLICATION_ERROR(-20005, 'Division managers at rank 1 need a supervisor of rank 2');
+        END IF;
+    END IF;
+
+    -- Logic for Rank 2: General Managers
+    IF :NEW.EmployeeRank = 2 THEN
+        -- Rule: Must NOT have a supervisor
+        IF :NEW.SupervisorID IS NOT NULL THEN
+            RAISE_APPLICATION_ERROR(-20006, 'General Managers of rank 2 do not have supervisors');
+        END IF;
+    END IF;
+END;
+/
+
+
+CREATE OR REPLACE TRIGGER trg_emergency_future_visit
+AFTER INSERT ON RoomStay
+FOR EACH ROW
+DECLARE
+    v_is_emergency NUMBER;
+BEGIN
+    -- Check if the room service is EMERGENCY
+    SELECT COUNT(*)
+    INTO v_is_emergency 
+    FROM RoomServices
+    WHERE RoomNumber = :NEW.RoomNumber
+      AND UPPER(ServiceType) = 'EMERGENCY'; 
+
+    -- Logic: If emergency, update the future visit date
+    IF v_is_emergency > 0 THEN
+        UPDATE Admission
+        SET FutureVisit = ADD_MONTHS(AdmitDate, 2)
+        WHERE AdmissionID = :NEW.Admission;
+    END IF;
+END;
+/
+
+
+CREATE OR REPLACE TRIGGER trg_equipment_auto_inspect
+BEFORE INSERT OR UPDATE ON Equipment
+FOR EACH ROW
+DECLARE
+    v_tech_exists NUMBER;
+BEGIN
+    IF :NEW.LastInspection IS NULL
+       OR :NEW.LastInspection < SYSDATE - 30 THEN
+       
+        SELECT COUNT(*)
+        INTO v_tech_exists
+        FROM CanRepairEquipment
+        WHERE EquipmentTypeID = :NEW.TypeID;
+
+        IF v_tech_exists > 0 THEN
+            :NEW.LastInspection := SYSDATE;
+        END IF;
+    END IF;
+END;
+/
+
