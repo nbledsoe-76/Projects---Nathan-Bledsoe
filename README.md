@@ -1,2 +1,2 @@
 # repo-1
-Repo-1
+These are projects I have completed as part of my academic curriculum at WPI.
