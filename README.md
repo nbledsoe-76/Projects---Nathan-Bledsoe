@@ -1,7 +1,7 @@
 # Nathan Bledsoe Project Portfolio
----
-This repository contains finance and data science projects I have built that incorporate data analysis, financial modeling, and programming. 
 
+This repository contains finance and data science projects I have built that incorporate data analysis, financial modeling, and programming. 
+---
 ### Experience
 
 * **Languages:** Python(Pandas, Scikit-learn, Matplotlib, Seaborn)
